@@ -4,7 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import httpx
 import os
 
-app = FastAPI(title="Hackathon Level 1 Agent", version="3.0.0")
+app = FastAPI(title="Hackathon Agent", version="4.0.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -41,29 +41,31 @@ async def handle_query(request: Request):
     query = data.get("query", "")
     assets = data.get("assets", [])
 
-    # Fetch all asset URLs
+    # Fetch asset URLs if provided
     asset_contents = []
     for url in assets:
         content = await fetch_asset(url)
         asset_contents.append(f"--- Content from {url} ---\n{content}")
 
-    context = "\n\n".join(asset_contents) if asset_contents else "No assets provided."
+    context = "\n\n".join(asset_contents) if asset_contents else ""
 
-    messages = [
-        {
-            "role": "system",
-            "content": (
-                "You are a precise question-answering agent for a hackathon evaluation system. "
-                "You will be given a question and reference content fetched from URLs. "
-                "Answer the question as accurately and concisely as possible. "
-                "Return ONLY the answer — no preamble, no explanation, no markdown formatting."
-            )
-        },
-        {
-            "role": "user",
-            "content": f"Reference Content:\n{context}\n\nQuestion: {query}\n\nAnswer:"
-        }
-    ]
+    system_prompt = """You are an answer extraction engine for an automated grading system.
+
+Return ONLY the answer — nothing else.
+
+RULES:
+- Never write full sentences
+- Never say "The answer is..." or "Based on..." or any preamble
+- Never explain your reasoning
+- If asked who scored highest → just the name e.g. "Bob"
+- If asked to extract a date → just the date e.g. "12 March 2024"
+- If asked a yes/no question → just "Yes" or "No"
+- If asked for a number → just the number e.g. "25"
+- Match the exact format of what is being asked for
+
+One or two words maximum unless the answer genuinely requires more."""
+
+    user_content = f"{context}\n\nQuestion: {query}" if context else f"Question: {query}"
 
     async with httpx.AsyncClient(timeout=30) as http:
         resp = await http.post(
@@ -73,9 +75,12 @@ async def handle_query(request: Request):
                 "Content-Type": "application/json"
             },
             json={
-                "model": "llama3-70b-8192",
-                "messages": messages,
-                "max_tokens": 512,
+                "model": "llama-3.3-70b-versatile",
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_content}
+                ],
+                "max_tokens": 50,
                 "temperature": 0
             }
         )
